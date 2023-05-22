@@ -17,6 +17,7 @@
 #define CODE_UPDATE_CONVERSATIONS           '\x23'
 #define CODE_UPDATE_MESSAGES                '\x24'
 
+
 ServerCommands::ServerCommands() 
 {
 }
@@ -25,7 +26,27 @@ ServerCommands::~ServerCommands()
 {
 }
 
-// PARSOWANIE WIADOMOŚCI
+
+/*
+Opis protokołu komunikacyjnego:
+• Wiadomości klient – serwer:
+    [typ wiadmości][id wysyłąjącego][nick wysyłającego][login wysyłającego][hasło wysyłającego][id odbiorcy][wiadomość]
+
+typ wiadomości – definiuje akcję, którą serwer ma wykonać np. dodać użytkownika, 
+sprawdzić dane logowania
+wszystkie dane oprócz typu są opcjonalne – w zależności od sytuacji jedne zostają podane inne nie
+
+• Wiadomości serwer – klient:
+[typ wiadomości][wiadomość][znak końca wiadomości] 
+
+typ wiadomości – informuje użytkownika czy akcja zakończyła się sukcesem(np. weryfikacja 
+danych logowania), część typów służy do wymuszenia na kliencie aktualizacji konkretnych informacji 
+np. doładowanie ostatniej wiadomości
+opcjonalna jest tylko wiadomość typ i znak końca są obligatoryjne.
+
+*/
+
+// PARSOWANIE WIADOMOŚCI 
 void ServerCommands::ParseMessage(char buffor[])
 {   
     parsedMessage retStruct = {};
