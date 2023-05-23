@@ -2,77 +2,6 @@
 #include "DBCommands.h"
 
 
-// INFORMACJE ZWROTNE Z BAZY DANYCH
-static int callback(void *NotUsed, int argc, char **argv, char **azColName) {
-   return 0;
-}
-
-static int callbackLoginData(void *param, int argc, char **argv, char **azColName) {
-    int* id = (int*)param;       
-    if (strcmp(azColName[0], "USER_ID") == 0) *id = atoi(argv[0]);
-    return 0;
-}
-
-static int callbackCheckConversationsID(void *param, int argc, char **argv, char **azColName) {
-    int* id = (int*)param;   
-    if (strcmp(azColName[0], "CONVERSATIONS_ID") == 0) *id = atoi(argv[0]);
-    return 0;
-}
-
-static int callbackCheckDataIDs(void *param, int argc, char **argv, char **azColName) {
-    std::vector<int>* ids = (std::vector<int>*)param;
-    if (strcmp(argv[0], "DATA_ID") != 0) ids->push_back(atoi(argv[0]));
-    return 0;
-}
-
-static int callbackGetMessageByID(void *param, int argc, char **argv, char **azColName) {
-    std::string* message = (std::string*)param;   
-    if (strcmp(azColName[0], "MESSAGE") == 0) *message = argv[0];
-    return 0;
-}
-
-static int callbackGetConversatorsIDs(void *param, int argc, char **argv, char **azColName) {
-    std::vector<int>* ids = (std::vector<int>*)param;
-    const char* userID = std::to_string(ids->at(0)).c_str();
-
-    if (strcmp(argv[0], userID) != 0) ids->push_back(atoi(argv[0]));
-    else ids->push_back(atoi(argv[1]));
-
-    return 0;
-}
-
-static int callbackGetNick(void *param, int argc, char **argv, char **azColName) {
-    std::string* nick = (std::string*)param;       
-    if (strcmp(azColName[0], "NICK") == 0) *nick = argv[0];
-    return 0;
-}
-
-static int callbackAddInvitation(void *param, int argc, char **argv, char **azColName)
-{
-    int* id = (int*)param;   
-    if (strcmp(azColName[0], "INVITATIONS_ID") == 0) *id = atoi(argv[0]);
-    return 0;
-}
-
-static int callbackAcceptInvitation(void *param, int argc, char **argv, char **azColName)
-{
-    int* id = (int*)param;   
-    if (strcmp(azColName[0], "FROM_ID") == 0) *id = atoi(argv[0]);
-    return 0;
-}
-
-static int callbackGetInvitationsUsersIDs(void *param, int argc, char **argv, char **azColName) {
-    std::vector<int>* ids = (std::vector<int>*)param;
-    const char* userID = std::to_string(ids->at(0)).c_str();
-
-    if (strcmp(argv[0], userID) != 0) ids->push_back(atoi(argv[0]));
-    else ids->push_back(atoi(argv[1]));
-
-    return 0;
-}
-
-
-
 DBCommands::DBCommands()
 {
     OpenDatabase();
@@ -97,438 +26,547 @@ void DBCommands::OpenDatabase()
 // returns: -1: sql error; 0: successfull
 int DBCommands::AddUser(parsedMessage mess)
 {
-    char *zErrMsg = 0;
-    int rc; 
-
-
-    std::string sql = "INSERT INTO USERS (NICK, LOGIN, PASSWORD) "  \
-            "VALUES ('" + mess.senderNick + "', '" + mess.senderLogin + "', '" + mess.senderPassword + "');";
-
-    rc = sqlite3_exec(db, sql.c_str(), callback, 0, &zErrMsg);
+    std::string sql = "INSERT INTO USERS (NICK, LOGIN, PASSWORD) VALUES (?, ?, ?);";
     
-    if( rc != SQLITE_OK )
-    {
-        fprintf(stderr, "SQL error: %s\n", zErrMsg);
-        sqlite3_free(zErrMsg);
+    sqlite3_stmt *stmt;
+    if (sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, NULL) != SQLITE_OK) {
+        std::cerr << "Failed to prepare statement\n";
         return -1;
-    } 
-    
-    //fprintf(stdout, "User added successfully\n");
+    }
 
+    if (sqlite3_bind_text(stmt, 1, mess.senderNick.c_str(), -1, SQLITE_STATIC) != SQLITE_OK ||
+        sqlite3_bind_text(stmt, 2, mess.senderLogin.c_str(), -1, SQLITE_STATIC) != SQLITE_OK ||
+        sqlite3_bind_text(stmt, 3, mess.senderPassword.c_str(), -1, SQLITE_STATIC) != SQLITE_OK) {
+        std::cerr << "Failed to bind parameters\n";
+        sqlite3_finalize(stmt);
+        return -1;
+    }
+
+    if (sqlite3_step(stmt) != SQLITE_DONE) {
+        std::cerr << "Execution failed: " << sqlite3_errmsg(db) << "\n";
+        sqlite3_finalize(stmt);
+        return -1;
+    }
+
+    sqlite3_finalize(stmt);
     return 0;   
 }
 
 // returns: -1: sql error; 0: no user_id; >0: user_id
 int DBCommands::CheckLoginData(parsedMessage mess) 
 {
-    char *zErrMsg = NULL;
+    sqlite3_stmt *stmt;
     int rc; 
-    int* recvData = new int;
-    *recvData = 0;
-    
-    std::string sql = "SELECT USER_ID FROM USERS WHERE \
-            LOGIN = '" + mess.senderLogin + "' AND PASSWORD = '" + mess.senderPassword + "';";
 
-    rc = sqlite3_exec(db, sql.c_str(), callbackLoginData, recvData, &zErrMsg);
-    
-    int userID = *recvData;
-    delete recvData;
+    std::string sql = "SELECT USER_ID FROM USERS WHERE LOGIN = ? AND PASSWORD = ?;";
 
-    if(rc != SQLITE_OK )
-    {
-        fprintf(stderr, "SQL error: %s\n", zErrMsg);
-        sqlite3_free(zErrMsg);
+    rc = sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, 0);
+    
+    if(rc != SQLITE_OK) {
+        fprintf(stderr, "SQL error: %s\n", sqlite3_errmsg(db));
         return -1;
-    } 
+    }
     
-    //if (user_id == 0) fprintf(stderr, "Login error: Wrong login or password\n");
-    //else fprintf(stdout, "Logged in successfully \n");
-    return userID; 
+    sqlite3_bind_text(stmt, 1, mess.senderLogin.c_str(), -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 2, mess.senderPassword.c_str(), -1, SQLITE_STATIC);
+
+    int userID = 0;
+    rc = sqlite3_step(stmt);
+    if(rc == SQLITE_ROW) {
+        userID = sqlite3_column_int(stmt, 0);
+    } else if (rc != SQLITE_DONE) {
+        fprintf(stderr, "SQL error: %s\n", sqlite3_errmsg(db));
+        sqlite3_finalize(stmt);
+        return -1;
+    }
+    
+    sqlite3_finalize(stmt);
+    return userID;
 }
+
 
 // returns: -1: sql error; 0: successfull
 int DBCommands::_AddToFriends(std::string userID1, std::string userID2)
 {
-    char *zErrMsg = NULL;
+    sqlite3_stmt *stmt;
     int rc; 
-    int* recvData = new int;
-    *recvData = 0;
 
-    std::string sql = "SELECT CONVERSATIONS_ID FROM CONVERSATIONS WHERE \
-    (USER_ID1 = '" + userID1 + "' AND USER_ID2 = '" + userID2 + "') \
-    OR (USER_ID1 = '" + userID2 + "' AND USER_ID2 = '" + userID1 + "');";
+    std::string sqlSelect = "SELECT COALESCE((SELECT CONVERSATIONS_ID FROM CONVERSATIONS WHERE \
+    (USER_ID1 = ? AND USER_ID2 = ?) OR (USER_ID1 = ? AND USER_ID2 = ?)), 0);";
 
-    rc = sqlite3_exec(db, sql.c_str(), callbackCheckConversationsID, recvData, &zErrMsg);
+    rc = sqlite3_prepare_v2(db, sqlSelect.c_str(), -1, &stmt, 0);
 
-    if(rc != SQLITE_OK )
-    {
-        fprintf(stderr, "SQL error: %s\n", zErrMsg);
-        sqlite3_free(zErrMsg);
-        delete recvData;
+    if(rc != SQLITE_OK) {
+        fprintf(stderr, "SQL error: %s\n", sqlite3_errmsg(db));
         return -1;
     }
-    
-    int conversationsID = *recvData;
+
+    sqlite3_bind_text(stmt, 1, userID1.c_str(), -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 2, userID2.c_str(), -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 3, userID2.c_str(), -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 4, userID1.c_str(), -1, SQLITE_STATIC);
+
+    rc = sqlite3_step(stmt);
+
+    if (rc != SQLITE_ROW) {
+        fprintf(stderr, "SQL error: %s\n", sqlite3_errmsg(db));
+        sqlite3_finalize(stmt);
+        return -1;
+    } 
+
+    int conversationsID = sqlite3_column_int(stmt, 0);
+    sqlite3_finalize(stmt);
 
     if(conversationsID == 0)
     {
+        std::string sqlInsert = "INSERT INTO CONVERSATIONS (USER_ID1, USER_ID2) \
+        VALUES (?, ?);";
 
-        sql = "INSERT INTO CONVERSATIONS (USER_ID1, USER_ID2)\
-        VALUES ('" + userID1 + "', '" + userID2 + "');";
+        rc = sqlite3_prepare_v2(db, sqlInsert.c_str(), -1, &stmt, 0);
 
-        rc = sqlite3_exec(db, sql.c_str(), callback, 0, &zErrMsg);
+        if(rc != SQLITE_OK) {
+            fprintf(stderr, "SQL error: %s\n", sqlite3_errmsg(db));
+            return -1;
+        }
 
-        if(rc != SQLITE_OK )
-        {
-            fprintf(stderr, "SQL error: %s\n", zErrMsg);
-            sqlite3_free(zErrMsg);
+        sqlite3_bind_text(stmt, 1, userID1.c_str(), -1, SQLITE_STATIC);
+        sqlite3_bind_text(stmt, 2, userID2.c_str(), -1, SQLITE_STATIC);
+
+        rc = sqlite3_step(stmt);
+
+        if (rc != SQLITE_DONE) {
+            fprintf(stderr, "SQL error: %s\n", sqlite3_errmsg(db));
+            sqlite3_finalize(stmt);
             return -1;
         } 
-        //fprintf(stdout, "Conversation created successfully\n");
 
-        sql = "SELECT CONVERSATIONS_ID FROM CONVERSATIONS WHERE \
-        (USER_ID1 = '" + userID1 + "' AND USER_ID2 = '" + userID2 + "') \
-        OR (USER_ID1 = '" + userID2 + "' AND USER_ID2 = '" + userID1 + "');";
-
-        rc = sqlite3_exec(db, sql.c_str(), callbackCheckConversationsID, recvData, &zErrMsg);
-        
-        conversationsID = *recvData;
-
+        conversationsID = sqlite3_last_insert_rowid(db);
+        sqlite3_finalize(stmt);
     }
 
-    delete recvData;
+    std::string sqlInsertFriends = "INSERT INTO FRIENDS (CONVERSATIONS_ID, USER_ID1, USER_ID2) \
+    VALUES (?, ?, ?);";
 
-    sql = "INSERT INTO FRIENDS (CONVERSATIONS_ID, USER_ID1, USER_ID2)\
-    VALUES ('" + std::to_string(conversationsID) + "', '"+ userID1 + "', '" + userID2 + "');";
+    rc = sqlite3_prepare_v2(db, sqlInsertFriends.c_str(), -1, &stmt, 0);
 
-    rc = sqlite3_exec(db, sql.c_str(), callback, 0, &zErrMsg);
+    if(rc != SQLITE_OK) {
+        fprintf(stderr, "SQL error: %s\n", sqlite3_errmsg(db));
+        return -1;
+    }
 
-    if(rc != SQLITE_OK )
-    {
-        fprintf(stderr, "SQL error: %s\n", zErrMsg);
-        sqlite3_free(zErrMsg);
+    sqlite3_bind_int(stmt, 1, conversationsID);
+    sqlite3_bind_text(stmt, 2, userID1.c_str(), -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 3, userID2.c_str(), -1, SQLITE_STATIC);
+
+    rc = sqlite3_step(stmt);
+
+    if (rc != SQLITE_DONE) {
+        fprintf(stderr, "SQL error: %s\n", sqlite3_errmsg(db));
+        sqlite3_finalize(stmt);
         return -1;
     } 
-    //fprintf(stdout, "Friendship created successfully\n");
 
-
+    sqlite3_finalize(stmt);
     return 0;
 }
+
 
 // returns: -1: sql error; 0: successfull
 int DBCommands::DeleteFromFriends(parsedMessage mess)
 {
-    char *zErrMsg = 0;
+    sqlite3_stmt *stmt;
     int rc; 
 
     std::string sql = "DELETE FROM FRIENDS WHERE \
-            (USER_ID1 = '" + mess.senderId + "' AND USER_ID2 = '" + mess.receiverId + "') \
-            OR (USER_ID1 = '" + mess.receiverId + "' AND USER_ID2 = '" + mess.senderId + "');";
+            (USER_ID1 = ? AND USER_ID2 = ?) \
+            OR (USER_ID1 = ? AND USER_ID2 = ?);";
 
-
-    rc = sqlite3_exec(db, sql.c_str(), callback, 0, &zErrMsg);
+    rc = sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, 0);
     
-    if( rc != SQLITE_OK )
-    {
-        fprintf(stderr, "SQL error: %s\n", zErrMsg);
-        sqlite3_free(zErrMsg);
+    if(rc != SQLITE_OK) {
+        fprintf(stderr, "SQL error: %s\n", sqlite3_errmsg(db));
+        return -1;
+    }
+    
+    sqlite3_bind_text(stmt, 1, mess.senderId.c_str(), -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 2, mess.receiverId.c_str(), -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 3, mess.receiverId.c_str(), -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 4, mess.senderId.c_str(), -1, SQLITE_STATIC);
+
+    rc = sqlite3_step(stmt);
+
+    if (rc != SQLITE_DONE) {
+        fprintf(stderr, "SQL error: %s\n", sqlite3_errmsg(db));
+        sqlite3_finalize(stmt);
         return -1;
     } 
-    //fprintf(stdout, "Friendship deleted successfully\n");
-    
-    return 0; 
+
+    sqlite3_finalize(stmt);
+    return 0;
 }
+
 
 // returns: -1: sql error; id dodanej widomości: successfull
 int DBCommands::AddMessage(parsedMessage mess)
 {
-    char *zErrMsg = NULL;
+    sqlite3_stmt *stmt;
     int rc; 
-    int* recvData = new int;
-    *recvData = 0;
 
-    std::string sql = "SELECT CONVERSATIONS_ID FROM CONVERSATIONS WHERE \
-    (USER_ID1 = '" + mess.senderId + "' AND USER_ID2 = '" + mess.receiverId + "') \
-    OR (USER_ID1 = '" + mess.receiverId + "' AND USER_ID2 = '" + mess.senderId + "');";
+    std::string sqlSelect = "SELECT CONVERSATIONS_ID FROM CONVERSATIONS WHERE \
+    (USER_ID1 = ? AND USER_ID2 = ?) \
+    OR (USER_ID1 = ? AND USER_ID2 = ?);";
 
-    rc = sqlite3_exec(db, sql.c_str(), callbackCheckConversationsID, recvData, &zErrMsg);
+    rc = sqlite3_prepare_v2(db, sqlSelect.c_str(), -1, &stmt, 0);
+
+    if(rc != SQLITE_OK) {
+        fprintf(stderr, "SQL error: %s\n", sqlite3_errmsg(db));
+        return -1;
+    }
     
-    int conversationsID = *recvData;
-    delete recvData;
+    sqlite3_bind_text(stmt, 1, mess.senderId.c_str(), -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 2, mess.receiverId.c_str(), -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 3, mess.receiverId.c_str(), -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 4, mess.senderId.c_str(), -1, SQLITE_STATIC);
 
-    sql = "INSERT INTO CONVERSATIONS_DATA (CONVERSATIONS_ID, FROM_ID, TO_ID, MESSAGE) "  \
-            "VALUES ('" + std::to_string(conversationsID) + "', '" + mess.senderId + "', '" + mess.receiverId + "', '" + mess.message + "');";
+    rc = sqlite3_step(stmt);
 
-    rc = sqlite3_exec(db, sql.c_str(), callback, 0, &zErrMsg);
-    
-    if( rc != SQLITE_OK )
-    {
-        fprintf(stderr, "SQL error: %s\n", zErrMsg);
-        sqlite3_free(zErrMsg);
+    if (rc != SQLITE_ROW) {
+        fprintf(stderr, "SQL error: %s\n", sqlite3_errmsg(db));
+        sqlite3_finalize(stmt);
         return -1;
     } 
 
-    return sqlite3_last_insert_rowid(db); 
+    int conversationsID = sqlite3_column_int(stmt, 0);
+    sqlite3_finalize(stmt);
+    
+    std::string sqlInsert = "INSERT INTO CONVERSATIONS_DATA (CONVERSATIONS_ID, FROM_ID, TO_ID, MESSAGE) "  \
+            "VALUES (?, ?, ?, ?);";
+
+    rc = sqlite3_prepare_v2(db, sqlInsert.c_str(), -1, &stmt, 0);
+
+    if(rc != SQLITE_OK) {
+        fprintf(stderr, "SQL error: %s\n", sqlite3_errmsg(db));
+        return -1;
+    }
+
+    sqlite3_bind_int(stmt, 1, conversationsID);
+    sqlite3_bind_text(stmt, 2, mess.senderId.c_str(), -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 3, mess.receiverId.c_str(), -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 4, mess.message.c_str(), -1, SQLITE_STATIC);
+
+    rc = sqlite3_step(stmt);
+
+    if (rc != SQLITE_DONE) {
+        fprintf(stderr, "SQL error: %s\n", sqlite3_errmsg(db));
+        sqlite3_finalize(stmt);
+        return -1;
+    } 
+
+    int lastId = sqlite3_last_insert_rowid(db);
+    sqlite3_finalize(stmt);
+
+    return lastId; 
 }
 
-// returns: wektor z identyfikatorami użytkowników konwersujących z użytkownikiem proszącym
+
 std::vector<int> DBCommands::GetUserConversations(parsedMessage mess)
 {
-    char *zErrMsg = NULL;
+    sqlite3_stmt *stmt;
     int rc; 
-    std::vector<int>* recvData = new std::vector<int>;
-    recvData->push_back(std::stoi(mess.senderId));
-    
-    std::string sql = "SELECT USER_ID1, USER_ID2 FROM CONVERSATIONS WHERE \
-            USER_ID1 = '" + mess.senderId + "' OR USER_ID2 = '" + mess.senderId + "';";
+    std::vector<int> conversationsID;
 
-    rc = sqlite3_exec(db, sql.c_str(), callbackGetConversatorsIDs, recvData, &zErrMsg);
-    
-    std::vector<int> usersID = *recvData;
+    std::string sql = "SELECT USER_ID1, USER_ID2 FROM CONVERSATIONS WHERE USER_ID1 = ? OR USER_ID2 = ?;";
 
-    delete recvData;
+    rc = sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, 0);
     
-    if(rc != SQLITE_OK )
-    {
-        fprintf(stderr, "SQL error: %s\n", zErrMsg);
-        sqlite3_free(zErrMsg);
-    } 
-    
-    return usersID; 
+    if(rc != SQLITE_OK) {
+        fprintf(stderr, "SQL error: %s\n", sqlite3_errmsg(db));
+        return conversationsID;
+    }
+
+    sqlite3_bind_text(stmt, 1, mess.senderId.c_str(), -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 2, mess.senderId.c_str(), -1, SQLITE_STATIC);
+
+    while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
+        std::string userID1 = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
+        std::string userID2 = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
+
+        conversationsID.push_back(userID1 == mess.senderId ? std::stoi(userID2) : std::stoi(userID1));
+    }
+
+    if(rc != SQLITE_DONE) {
+        fprintf(stderr, "SQL error: %s\n", sqlite3_errmsg(db));
+    }
+
+    sqlite3_finalize(stmt);
+    return conversationsID; 
 }
 
-// returns: nazwa użytkownika o podanym id
 std::string DBCommands::GetUserNickname(parsedMessage mess)
 {
-    char *zErrMsg = NULL;
+    sqlite3_stmt *stmt;
     int rc; 
-    std::string *nick = new std::string;
-    
-    std::string sql = "SELECT NICK FROM USERS WHERE \
-            USER_ID = '" + mess.receiverId + "';";
+    std::string nickname;
 
-    rc = sqlite3_exec(db, sql.c_str(), callbackGetNick, nick, &zErrMsg);
-    
-    std::string retNick = *nick;
+    std::string sql = "SELECT NICK FROM USERS WHERE USER_ID = ?;";
 
-    delete nick;
+    rc = sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, 0);
     
-    if(rc != SQLITE_OK )
-    {
-        fprintf(stderr, "SQL error: %s\n", zErrMsg);
-        sqlite3_free(zErrMsg);
-    } 
-    
-    return retNick; 
+    if(rc != SQLITE_OK) {
+        fprintf(stderr, "SQL error: %s\n", sqlite3_errmsg(db));
+        return nickname;
+    }
+
+    sqlite3_bind_text(stmt, 1, mess.receiverId.c_str(), -1, SQLITE_STATIC);
+
+    rc = sqlite3_step(stmt);
+
+    if(rc == SQLITE_ROW) {
+        nickname = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
+    } else if(rc != SQLITE_DONE) {
+        fprintf(stderr, "SQL error: %s\n", sqlite3_errmsg(db));
+    }
+
+    sqlite3_finalize(stmt);
+    return nickname; 
 }
 
-// returns: para wektor wiadomości użytkownika nadającego i wektor wiadomości odbierającego 
 std::pair<std::vector<int>, std::vector<int>> DBCommands::GetMessegesIDs(parsedMessage mess)
 {
-    char *zErrMsg = NULL;
+    sqlite3_stmt *stmt;
     int rc; 
-    std::vector<int>* senderMess = new std::vector<int>;
-    
-    std::string sql = "SELECT DATA_ID FROM CONVERSATIONS_DATA WHERE \
-            (FROM_ID = '" + mess.senderId + "' AND TO_ID = '" + mess.receiverId + "');";
+    std::vector<int> senderMsgs, receiverMsgs;
 
-    rc = sqlite3_exec(db, sql.c_str(), callbackCheckDataIDs, senderMess, &zErrMsg);
-    
-    std::vector<int> sIDs = *senderMess;
+    std::string sql = "SELECT DATA_ID, FROM_ID FROM CONVERSATIONS_DATA WHERE (FROM_ID = ? AND TO_ID = ?) OR (FROM_ID = ? AND TO_ID = ?);";
 
-    delete senderMess;
+    rc = sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, 0);
     
-    if(rc != SQLITE_OK )
-    {
-        fprintf(stderr, "SQL error: %s\n", zErrMsg);
-        sqlite3_free(zErrMsg);
-    } 
+    if(rc != SQLITE_OK) {
+        fprintf(stderr, "SQL error: %s\n", sqlite3_errmsg(db));
+        return std::make_pair(senderMsgs, receiverMsgs);
+    }
 
-    std::vector<int>* recvMess = new std::vector<int>;
+    sqlite3_bind_text(stmt, 1, mess.senderId.c_str(), -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 2, mess.receiverId.c_str(), -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 3, mess.receiverId.c_str(), -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 4, mess.senderId.c_str(), -1, SQLITE_STATIC);
 
-    sql = "SELECT DATA_ID FROM CONVERSATIONS_DATA WHERE \
-            (FROM_ID = '" + mess.receiverId + "' AND TO_ID = '" + mess.senderId + "');";
+    while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
+        int dataID = sqlite3_column_int(stmt, 0);
+        std::string fromID = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
 
-    rc = sqlite3_exec(db, sql.c_str(), callbackCheckDataIDs, recvMess, &zErrMsg);
-    
-    std::vector<int> rIDs = *recvMess;
+        if(fromID == mess.senderId)
+            senderMsgs.push_back(dataID);
+        else
+            receiverMsgs.push_back(dataID);
+    }
 
-    delete recvMess;
-    
-    if(rc != SQLITE_OK )
-    {
-        fprintf(stderr, "SQL error: %s\n", zErrMsg);
-        sqlite3_free(zErrMsg);
-    } 
-    
-    return std::make_pair(sIDs, rIDs); 
+    if(rc != SQLITE_DONE) {
+        fprintf(stderr, "SQL error: %s\n", sqlite3_errmsg(db));
+    }
+
+    sqlite3_finalize(stmt);
+    return std::make_pair(senderMsgs, receiverMsgs); 
 }
 
-// returns: wiadomośc o podanym id
+
 std::string DBCommands::GetMessageByID(parsedMessage mess)
 {
-    char *zErrMsg = NULL;
+    sqlite3_stmt *stmt;
     int rc; 
-    std::string* recvData = new std::string;
-    
-    std::string sql = "SELECT MESSAGE FROM CONVERSATIONS_DATA WHERE \
-            (DATA_ID = " + mess.receiverId + ");";
+    std::string message;
 
-    rc = sqlite3_exec(db, sql.c_str(), callbackGetMessageByID, recvData, &zErrMsg);
-    
-    std::string message = *recvData;
+    std::string sql = "SELECT MESSAGE FROM CONVERSATIONS_DATA WHERE DATA_ID = ?;";
 
-    delete recvData;
+    rc = sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, 0);
     
-    if(rc != SQLITE_OK )
-    {
-        fprintf(stderr, "SQL error: %s\n", zErrMsg);
-        sqlite3_free(zErrMsg);
-    } 
-    
+    if(rc != SQLITE_OK) {
+        fprintf(stderr, "SQL error: %s\n", sqlite3_errmsg(db));
+        return message;
+    }
+
+    sqlite3_bind_text(stmt, 1, mess.receiverId.c_str(), -1, SQLITE_STATIC);
+
+    rc = sqlite3_step(stmt);
+
+    if(rc == SQLITE_ROW) {
+        message = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
+    } else if(rc != SQLITE_DONE) {
+        fprintf(stderr, "SQL error: %s\n", sqlite3_errmsg(db));
+    }
+
+    sqlite3_finalize(stmt);
     return message; 
 }
 
-
-// returns: -1: sql error 0: success
 int DBCommands::AddInvitation(parsedMessage mess)
 {
-    char *zErrMsg = NULL;
+    sqlite3_stmt *stmt;
     int rc; 
-    int* recvData = new int;
-    *recvData = 0;
+    int invitationID = 0;
 
-    std::string sql = "SELECT INVITATION_ID FROM INVITATIONS WHERE \
-    (FROM_ID = '" + mess.senderId + "' AND TO_ID = '" + mess.receiverId + "') \
-    OR (FROM_ID = '" + mess.receiverId + "' AND TO_ID = '" + mess.senderId + "');";
+    std::string sql = "SELECT INVITATION_ID FROM INVITATIONS WHERE (FROM_ID = ? AND TO_ID = ?) OR (FROM_ID = ? AND TO_ID = ?);";
 
-    rc = sqlite3_exec(db, sql.c_str(), callbackAddInvitation, recvData, &zErrMsg);
+    rc = sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, 0);
     
-    if( rc != SQLITE_OK )
-    {
-        fprintf(stderr, "SQL error: %s\n", zErrMsg);
-        sqlite3_free(zErrMsg);
+    if(rc != SQLITE_OK) {
+        fprintf(stderr, "SQL error: %s\n", sqlite3_errmsg(db));
         return -1;
-    } 
-
-    int invitaionID = *recvData;
-    delete recvData;
-
-    if(invitaionID == 0)
-    {
-
-        sql = "INSERT INTO INVITATIONS (FROM_ID, TO_ID)\
-        VALUES ('" + mess.senderId + "', '" + mess.receiverId + "');";
-
-        rc = sqlite3_exec(db, sql.c_str(), callback, 0, &zErrMsg);
-
-        if(rc != SQLITE_OK )
-        {
-            fprintf(stderr, "SQL error: %s\n", zErrMsg);
-            sqlite3_free(zErrMsg);
-            return -1;
-        } 
     }
-    else 
-    {
+
+    sqlite3_bind_text(stmt, 1, mess.senderId.c_str(), -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 2, mess.receiverId.c_str(), -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 3, mess.receiverId.c_str(), -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 4, mess.senderId.c_str(), -1, SQLITE_STATIC);
+
+    rc = sqlite3_step(stmt);
+
+    if(rc == SQLITE_ROW) {
+        invitationID = sqlite3_column_int(stmt, 0);
+    } else if(rc != SQLITE_DONE) {
+        fprintf(stderr, "SQL error: %s\n", sqlite3_errmsg(db));
+    }
+
+    sqlite3_finalize(stmt);
+
+    if(invitationID == 0) {
+        sql = "INSERT INTO INVITATIONS (FROM_ID, TO_ID) VALUES (?, ?);";
+
+        rc = sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, 0);
+
+        if(rc != SQLITE_OK) {
+            fprintf(stderr, "SQL error: %s\n", sqlite3_errmsg(db));
+            return -1;
+        }
+
+        sqlite3_bind_text(stmt, 1, mess.senderId.c_str(), -1, SQLITE_STATIC);
+        sqlite3_bind_text(stmt, 2, mess.receiverId.c_str(), -1, SQLITE_STATIC);
+
+        rc = sqlite3_step(stmt);
+
+        if(rc != SQLITE_DONE) {
+            fprintf(stderr, "SQL error: %s\n", sqlite3_errmsg(db));
+        }
+
+        sqlite3_finalize(stmt);
+    } else {
         return -1;
     }
 
     return 0;   
 }
 
-
-// returns: -1: sql error 0: success
 int DBCommands::AcceptInvitation(parsedMessage mess)
 {
-    char *zErrMsg = NULL;
+    sqlite3_stmt *stmt;
     int rc; 
-    int* recvData = new int;
-    *recvData = -1;
+    int fromID = -1;
 
-    std::string sql = "SELECT FROM_ID FROM INVITATIONS WHERE \
-    TO_ID = '" + mess.senderId + "';";
+    std::string sql = "SELECT FROM_ID FROM INVITATIONS WHERE TO_ID = ?;";
 
-    rc = sqlite3_exec(db, sql.c_str(), callbackAcceptInvitation, recvData, &zErrMsg);
+    rc = sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, 0);
     
-    int fromID = *recvData;
-    delete recvData;
-
-    if( rc != SQLITE_OK )
-    {
-        fprintf(stderr, "SQL error: %s\n", zErrMsg);
-        sqlite3_free(zErrMsg);
-        return -1;
-    } 
-
-    if (fromID == -1)
-    {
-        puts("Unknown user request!");
+    if(rc != SQLITE_OK) {
+        fprintf(stderr, "SQL error: %s\n", sqlite3_errmsg(db));
         return -1;
     }
-    else
-    {
-        sql = "DELETE FROM INVITATIONS WHERE \
-        TO_ID = '" + mess.senderId + "';";
 
-        rc = sqlite3_exec(db, sql.c_str(), callback, 0, &zErrMsg);
+    sqlite3_bind_text(stmt, 1, mess.senderId.c_str(), -1, SQLITE_STATIC);
 
-        if( rc != SQLITE_OK )
-        {
-            fprintf(stderr, "SQL error: %s\n", zErrMsg);
-            sqlite3_free(zErrMsg);
+    rc = sqlite3_step(stmt);
+
+    if(rc == SQLITE_ROW) {
+        fromID = sqlite3_column_int(stmt, 0);
+    } else if(rc != SQLITE_DONE) {
+        fprintf(stderr, "SQL error: %s\n", sqlite3_errmsg(db));
+    }
+
+    sqlite3_finalize(stmt);
+
+    if(fromID == -1) {
+        puts("Unknown user request!");
+        return -1;
+    } else {
+        sql = "DELETE FROM INVITATIONS WHERE TO_ID = ?;";
+
+        rc = sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, 0);
+
+        if(rc != SQLITE_OK) {
+            fprintf(stderr, "SQL error: %s\n", sqlite3_errmsg(db));
             return -1;
-        } 
+        }
+
+        sqlite3_bind_text(stmt, 1, mess.senderId.c_str(), -1, SQLITE_STATIC);
+
+        rc = sqlite3_step(stmt);
+
+        if(rc != SQLITE_DONE) {
+            fprintf(stderr, "SQL error: %s\n", sqlite3_errmsg(db));
+        }
+
+        sqlite3_finalize(stmt);
 
         return _AddToFriends(mess.senderId, std::to_string(fromID));
     }
-
-    
 }
 
-// returns: -1: sql error 0: success
 int DBCommands::DeclineInvitation(parsedMessage mess)
 {
     char *zErrMsg = NULL;
     int rc; 
 
-    std::string sql = "DELETE FROM INVITATIONS WHERE \
-        FROM_ID = '" + mess.receiverId + "' AND TO_ID = '" + mess.senderId + "';";
+    std::string sql = "DELETE FROM INVITATIONS WHERE FROM_ID = ? AND TO_ID = ?;";
 
-    rc = sqlite3_exec(db, sql.c_str(), callback, 0, &zErrMsg);
+    sqlite3_stmt *stmt;
+    rc = sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, 0);
 
-    if( rc != SQLITE_OK )
-    {
-        fprintf(stderr, "SQL error: %s\n", zErrMsg);
-        sqlite3_free(zErrMsg);
+    if(rc != SQLITE_OK) {
+        fprintf(stderr, "SQL error: %s\n", sqlite3_errmsg(db));
         return -1;
-    } 
+    }
+
+    sqlite3_bind_text(stmt, 1, mess.receiverId.c_str(), -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 2, mess.senderId.c_str(), -1, SQLITE_STATIC);
+
+    rc = sqlite3_step(stmt);
+
+    if(rc != SQLITE_DONE) {
+        fprintf(stderr, "SQL error: %s\n", sqlite3_errmsg(db));
+    }
+
+    sqlite3_finalize(stmt);
 
     return 0;
 }
 
-// returns: identyfikatory użytkowników zapraszających
 std::vector<int> DBCommands::GetInvitationsUsersIDs(parsedMessage mess)
 {
-    char *zErrMsg = NULL;
+    sqlite3_stmt *stmt;
     int rc; 
-    std::vector<int>* recvData = new std::vector<int>;
-    recvData->push_back(std::stoi(mess.senderId));
-    
-    std::string sql = "SELECT FROM_ID, TO_ID FROM INVITATIONS WHERE \
-            TO_ID = '" + mess.senderId + "';";
+    std::vector<int> usersID;
+    usersID.push_back(std::stoi(mess.senderId));
 
-    rc = sqlite3_exec(db, sql.c_str(), callbackGetInvitationsUsersIDs, recvData, &zErrMsg);
-    
-    std::vector<int> usersID = *recvData;
+    std::string sql = "SELECT FROM_ID, TO_ID FROM INVITATIONS WHERE TO_ID = ?;";
 
-    delete recvData;
+    rc = sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, 0);
     
-    if(rc != SQLITE_OK )
-    {
-        fprintf(stderr, "SQL error: %s\n", zErrMsg);
-        sqlite3_free(zErrMsg);
-    } 
-    
+    if(rc != SQLITE_OK) {
+        fprintf(stderr, "SQL error: %s\n", sqlite3_errmsg(db));
+        return usersID;
+    }
+
+    sqlite3_bind_text(stmt, 1, mess.senderId.c_str(), -1, SQLITE_STATIC);
+
+    while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
+        int fromID = sqlite3_column_int(stmt, 0);
+        usersID.push_back(fromID);
+    }
+
+    if(rc != SQLITE_DONE) {
+        fprintf(stderr, "SQL error: %s\n", sqlite3_errmsg(db));
+    }
+
+    sqlite3_finalize(stmt);
     return usersID; 
 }
+
